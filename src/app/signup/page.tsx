@@ -1,16 +1,41 @@
-import type { Metadata } from "next";
+"use client";
+
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { signUp } from "@/app/actions";
-import { Notice, one } from "@/components/ui";
+import { useRouter, useSearchParams } from "next/navigation";
+import { register } from "@/lib/demo/store";
+import { Notice } from "@/components/ui";
 import { TRADES } from "@/lib/config";
 
-export const metadata: Metadata = { title: "Sign up" };
+export default function SignUpPage() {
+  return (
+    <Suspense>
+      <SignUp />
+    </Suspense>
+  );
+}
 
-export default async function SignUpPage({ searchParams }: PageProps<"/signup">) {
-  const sp = await searchParams;
-  const role = one(sp.role) === "trader" ? "trader" : "customer";
+function SignUp() {
+  const router = useRouter();
+  const role = useSearchParams().get("role") === "trader" ? "trader" : "customer";
+  const [error, setError] = useState<string>();
   const tab = (active: boolean) =>
     `flex min-h-11 flex-1 items-center justify-center rounded-lg text-sm font-semibold ${active ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`;
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const get = (k: string) => String(f.get(k) ?? "").trim();
+    if (get("password").length < 8) return setError("Password must be at least 8 characters.");
+    register({
+      role,
+      full_name: get("full_name"),
+      postcode: get("postcode"),
+      trade: get("trade"),
+      business_name: get("business_name"),
+    });
+    router.push(role === "customer" ? "/jobs/new?welcome=1" : "/jobs?welcome=1");
+  }
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-5">
@@ -23,9 +48,8 @@ export default async function SignUpPage({ searchParams }: PageProps<"/signup">)
           I&apos;m a tradesperson
         </Link>
       </div>
-      <Notice error={one(sp.error)} />
-      <form action={signUp} className="card flex flex-col gap-4">
-        <input type="hidden" name="role" value={role} />
+      <Notice error={error} />
+      <form onSubmit={onSubmit} className="card flex flex-col gap-4" key={role}>
         <div>
           <label htmlFor="full_name" className="label">Your name</label>
           <input id="full_name" name="full_name" required maxLength={120} autoComplete="name" className="input" />
@@ -49,7 +73,7 @@ export default async function SignUpPage({ searchParams }: PageProps<"/signup">)
         )}
         <div>
           <label htmlFor="postcode" className="label">{role === "trader" ? "Base postcode" : "Postcode"}</label>
-          <input id="postcode" name="postcode" maxLength={10} autoComplete="postal-code" className="input uppercase" placeholder="SE15 4QN" />
+          <input id="postcode" name="postcode" required maxLength={10} autoComplete="postal-code" className="input uppercase" placeholder="SE15 4QN" />
         </div>
         <div>
           <label htmlFor="email" className="label">Email</label>
@@ -58,7 +82,7 @@ export default async function SignUpPage({ searchParams }: PageProps<"/signup">)
         <div>
           <label htmlFor="password" className="label">Password</label>
           <input id="password" name="password" type="password" required minLength={8} autoComplete="new-password" className="input" />
-          <p className="mt-1 text-xs text-muted">At least 8 characters.</p>
+          <p className="mt-1 text-xs text-muted">At least 8 characters. In this demo, details stay in your browser.</p>
         </div>
         <button className="btn-primary w-full">Create {role === "trader" ? "trader" : "customer"} account</button>
       </form>

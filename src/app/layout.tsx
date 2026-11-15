@@ -19,7 +19,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Header />
         <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:py-8">{children}</main>
         <footer className="px-4 py-6 text-center text-xs text-muted">
-          {APP_NAME} prototype · card and bank payments are simulated
+          {APP_NAME} demo · data is stored only in your browser · payments are simulated
         </footer>
       </body>
     </html>

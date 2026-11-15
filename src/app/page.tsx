@@ -1,11 +1,8 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { getMe } from "@/lib/data";
 import { APP_TAGLINE } from "@/lib/config";
+import { TryAs } from "./try-as";
 
-export default async function Home() {
-  if (await getMe()) redirect("/jobs");
-
+export default function Home() {
   const steps = [
     ["Post your job", "Describe the work and your postcode. Local tradespeople are notified."],
     ["Compare quotes and ratings", "See each price next to the trader's rating, reviews and jobs done. Pick the one you want."],
@@ -28,6 +25,7 @@ export default async function Home() {
             I&apos;m a tradesperson
           </Link>
         </div>
+        <TryAs />
       </section>
 
       <section className="card flex flex-col gap-4">

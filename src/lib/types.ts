@@ -13,6 +13,10 @@ export type Profile = {
   business_name: string | null;
   bio: string | null;
   created_at: string;
+  /** Demo only: reputation history for sample accounts, added to real activity. */
+  history?: { rating: number; reviews: number; jobs: number; onTime: number; late: number };
+  /** Demo only: sample accounts that reply automatically. */
+  bot?: boolean;
 };
 
 export type Job = {
@@ -73,4 +77,13 @@ export type Stats = {
   paid_jobs: number;
   paid_on_time: number;
   paid_late_or_overdue: number;
+};
+
+export type Notification = {
+  id: string;
+  user_id: string;
+  message: string;
+  link: string | null;
+  read: boolean;
+  created_at: string;
 };

@@ -1,7 +1,10 @@
+"use client";
+
 import Link from "next/link";
-import { getMe, unreadCount } from "@/lib/data";
-import { logOut } from "@/app/actions";
+import { useRouter } from "next/navigation";
+import { switchUser, useDemo } from "@/lib/demo/store";
 import { APP_NAME } from "@/lib/config";
+import { DemoBar } from "@/components/demo";
 
 export function Logo() {
   return (
@@ -16,51 +19,49 @@ export function Logo() {
   );
 }
 
-export async function Header() {
-  const me = await getMe();
-  const unread = me ? await unreadCount(me.id) : 0;
+export function Header() {
+  const d = useDemo();
+  const router = useRouter();
+  const me = d?.profiles.find((p) => p.id === d.meId);
+  const unread = me ? d!.notifications.filter((n) => n.user_id === me.id && !n.read).length : 0;
   const link = "flex min-h-11 items-center rounded-lg px-2.5 text-sm font-semibold text-muted hover:bg-gray-100 hover:text-ink";
 
   return (
-    <header className="border-b border-line bg-white">
-      <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 px-4 py-2">
-        <Logo />
-        {me ? (
-          <nav className="flex flex-wrap items-center gap-0.5" aria-label="Main">
-            <Link href="/jobs" className={link}>
-              {me.role === "trader" ? "Find jobs" : "My jobs"}
-            </Link>
-            {me.role === "customer" && (
-              <Link href="/jobs/new" className={link}>
-                Post a job
+    <>
+      <DemoBar />
+      <header className="border-b border-line bg-white">
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 px-4 py-2">
+          <Logo />
+          {!d ? null : me ? (
+            <nav className="flex flex-wrap items-center gap-0.5" aria-label="Main">
+              <Link href="/jobs" className={link}>{me.role === "trader" ? "Find jobs" : "My jobs"}</Link>
+              {me.role === "customer" && <Link href="/jobs/new" className={link}>Post a job</Link>}
+              <Link href="/notifications" className={link}>
+                Alerts
+                {unread > 0 && (
+                  <span className="ml-1 rounded-full bg-warn px-1.5 text-xs text-white" aria-label={`${unread} unread`}>{unread}</span>
+                )}
               </Link>
-            )}
-            <Link href="/notifications" className={link}>
-              Alerts
-              {unread > 0 && (
-                <span className="ml-1 rounded-full bg-warn px-1.5 text-xs text-white" aria-label={`${unread} unread`}>
-                  {unread}
-                </span>
-              )}
-            </Link>
-            <Link href="/account" className={link}>
-              Account
-            </Link>
-            <form action={logOut}>
-              <button className={link}>Log out</button>
-            </form>
-          </nav>
-        ) : (
-          <nav className="flex items-center gap-2" aria-label="Main">
-            <Link href="/login" className="btn-secondary">
-              Log in
-            </Link>
-            <Link href="/signup" className="btn-primary">
-              Sign up
-            </Link>
-          </nav>
-        )}
-      </div>
-    </header>
+              <Link href={`/profile/${me.id}`} className={link}>Profile</Link>
+              <button
+                type="button"
+                className={link}
+                onClick={() => {
+                  switchUser(null);
+                  router.push("/");
+                }}
+              >
+                Log out
+              </button>
+            </nav>
+          ) : (
+            <nav className="flex items-center gap-2" aria-label="Main">
+              <Link href="/login" className="btn-secondary">Log in</Link>
+              <Link href="/signup" className="btn-primary">Sign up</Link>
+            </nav>
+          )}
+        </div>
+      </header>
+    </>
   );
 }

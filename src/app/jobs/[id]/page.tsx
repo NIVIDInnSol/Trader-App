@@ -1,67 +1,64 @@
-import type { Metadata } from "next";
+"use client";
+
+import { Suspense } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { requireMe, getStats } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
-import { date, money, timeAgo } from "@/lib/format";
-import {
-  acceptQuote,
-  cancelJob,
-  confirmCash,
-  createInvoice,
-  leaveReview,
-  payInvoice,
-  sendReminder,
-  submitQuote,
-  withdrawQuote,
-} from "@/app/actions";
-import { Avatar, BackLink, CustomerTrust, Notice, Stars, StatusPill, TraderRating, one } from "@/components/ui";
-import type { Invoice, Job, Profile, Quote, Review, Stats } from "@/lib/types";
+import { useParams, useSearchParams } from "next/navigation";
+import { WithMe } from "@/components/demo";
+import * as demo from "@/lib/demo/store";
+import { displayName, statsFor } from "@/lib/demo/store";
+import type { DemoData } from "@/lib/demo/seed";
+import { date, money, timeAgo, toPence } from "@/lib/format";
+import { Avatar, BackLink, CustomerTrust, Notice, Stars, StatusPill, TraderRating } from "@/components/ui";
+import type { Invoice, Job, PaymentMethod, Profile, Quote, Review } from "@/lib/types";
 
-export const metadata: Metadata = { title: "Job" };
+type Submit = React.FormEvent<HTMLFormElement>;
+const fields = (e: Submit) => {
+  e.preventDefault();
+  const f = new FormData(e.currentTarget);
+  return (k: string) => String(f.get(k) ?? "").trim();
+};
 
-type QuoteRow = Quote & { trader: Pick<Profile, "id" | "full_name" | "business_name" | "trade"> };
+export default function JobPage() {
+  return (
+    <Suspense>
+      <WithMe>{(d, me) => <JobDetail d={d} me={me} />}</WithMe>
+    </Suspense>
+  );
+}
 
-export default async function JobPage({ params, searchParams }: PageProps<"/jobs/[id]">) {
-  const { id } = await params;
-  const sp = await searchParams;
-  const me = await requireMe();
-  const supabase = await createClient();
+function JobDetail({ d, me }: { d: DemoData; me: Profile }) {
+  const { id } = useParams<{ id: string }>();
+  const sp = useSearchParams();
+  const job = d.jobs.find((j) => j.id === id);
+  const customer = job && d.profiles.find((p) => p.id === job.customer_id);
+  const isCustomer = !!job && me.id === job.customer_id;
+  const visible = job && (isCustomer || me.role === "trader");
+  if (!job || !customer || !visible) {
+    return (
+      <div className="card flex flex-col items-start gap-3">
+        <h1 className="h1">Job not found</h1>
+        <Link href="/jobs" className="btn-primary">Back to jobs</Link>
+      </div>
+    );
+  }
 
-  const { data: jobData } = await supabase
-    .from("jobs")
-    .select("*, customer:profiles!jobs_customer_id_fkey(id, full_name, postcode)")
-    .eq("id", id)
-    .maybeSingle();
-  if (!jobData) notFound();
-  const job = jobData as Job & { customer: Pick<Profile, "id" | "full_name" | "postcode"> };
-
-  const [{ data: quoteData }, { data: invoiceData }, { data: reviewData }] = await Promise.all([
-    supabase
-      .from("quotes")
-      .select("*, trader:profiles!quotes_trader_id_fkey(id, full_name, business_name, trade)")
-      .eq("job_id", id)
-      .order("amount_pence"),
-    supabase.from("invoices").select("*").eq("job_id", id).maybeSingle(),
-    supabase.from("reviews").select("*").eq("job_id", id),
-  ]);
-  const quotes = (quoteData ?? []) as QuoteRow[];
-  const invoice = invoiceData as Invoice | null;
-  const reviews = (reviewData ?? []) as Review[];
-  const stats = await getStats([job.customer_id, ...quotes.map((q) => q.trader_id)]);
-
-  const isCustomer = me.id === job.customer_id;
+  const quotes = d.quotes.filter((q) => q.job_id === job.id);
+  const invoice = d.invoices.find((i) => i.job_id === job.id) ?? null;
+  const reviews = d.reviews.filter((r) => r.job_id === job.id);
   const accepted = quotes.find((q) => q.id === job.accepted_quote_id);
   const myQuote = quotes.find((q) => q.trader_id === me.id);
   const isAssignedTrader = !!accepted && accepted.trader_id === me.id;
-  const myReview = reviews.find((r) => r.reviewer_id === me.id);
+  const acceptedTrader = accepted && d.profiles.find((p) => p.id === accepted.trader_id);
 
   return (
     <div className="flex flex-col gap-5">
       <BackLink href="/jobs">{isCustomer ? "My jobs" : "Jobs"}</BackLink>
       <Notice
-        error={one(sp.error)}
-        message={one(sp.posted) ? "Your job is live. We'll let you know as quotes come in." : undefined}
+        message={
+          sp.get("posted") && job.status === "open"
+            ? "Your job is live! Local tradespeople have been notified. Quotes will appear below."
+            : undefined
+        }
       />
 
       <section className="card flex flex-col gap-3">
@@ -76,29 +73,31 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
         {!isCustomer && (
           <div className="mt-1 flex flex-col gap-2 rounded-xl border border-brand/40 bg-brand-soft/40 p-3">
             <div className="flex items-center gap-3">
-              <Avatar name={job.customer.full_name} size={40} />
+              <Avatar name={customer.full_name} size={40} />
               <div className="flex-1">
-                <Link href={`/profile/${job.customer_id}`} className="font-semibold hover:underline">{job.customer.full_name}</Link>
-                <p className="text-xs text-muted">Customer</p>
+                <Link href={`/profile/${customer.id}`} className="font-semibold hover:underline">{customer.full_name}</Link>
+                <p className="text-xs text-muted">Customer · member since {date(customer.created_at)}</p>
               </div>
             </div>
-            <CustomerTrust stats={stats.get(job.customer_id)} />
+            <CustomerTrust stats={statsFor(d, customer.id)} />
+            <LatestComment d={d} about={customer.id} />
           </div>
         )}
       </section>
 
       {isCustomer ? (
-        <CustomerView job={job} quotes={quotes} accepted={accepted} invoice={invoice} stats={stats} sort={one(sp.sort)} />
+        <CustomerView d={d} job={job} quotes={quotes} accepted={accepted} invoice={invoice} sort={sp.get("sort")} />
       ) : (
-        <TraderView job={job} myQuote={myQuote} isAssigned={isAssignedTrader} invoice={invoice} />
+        <TraderView me={me} job={job} myQuote={myQuote} isAssigned={isAssignedTrader} invoice={invoice} />
       )}
 
       {invoice?.status === "paid" && (isCustomer || isAssignedTrader) && (
         <ReviewSection
+          me={me}
           jobId={job.id}
-          myReview={myReview}
+          myReview={reviews.find((r) => r.reviewer_id === me.id)}
           theirReview={reviews.find((r) => r.reviewer_id !== me.id)}
-          otherName={isCustomer ? (accepted?.trader.business_name || accepted?.trader.full_name || "your trader") : job.customer.full_name}
+          otherName={isCustomer ? (acceptedTrader ? displayName(acceptedTrader) : "your trader") : customer.full_name}
           isCustomer={isCustomer}
         />
       )}
@@ -106,30 +105,42 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
   );
 }
 
+function LatestComment({ d, about }: { d: DemoData; about: string }) {
+  const r = [...d.reviews].filter((x) => x.reviewee_id === about && x.comment).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  if (!r) return null;
+  const by = d.profiles.find((p) => p.id === r.reviewer_id);
+  return (
+    <p className="rounded-lg bg-white/70 p-2 text-sm text-gray-700">
+      <span className="block text-xs font-semibold text-muted">Latest comment from a tradesperson</span>“{r.comment}”
+      {by ? ` (${by.full_name.split(" ")[0]}, ${by.trade ?? ""})` : ""}
+    </p>
+  );
+}
+
 // ------------------------------------------------------------------ customer
 
 function CustomerView({
+  d,
   job,
   quotes,
   accepted,
   invoice,
-  stats,
   sort,
 }: {
+  d: DemoData;
   job: Job;
-  quotes: QuoteRow[];
-  accepted?: QuoteRow;
+  quotes: Quote[];
+  accepted?: Quote;
   invoice: Invoice | null;
-  stats: Map<string, Stats>;
-  sort?: string;
+  sort: string | null;
 }) {
+  const trader = (id: string) => d.profiles.find((p) => p.id === id)!;
+
   if (job.status === "open") {
     const pending = quotes.filter((q) => q.status === "pending");
     const byRating = sort === "rating";
     const sorted = [...pending].sort((a, b) =>
-      byRating
-        ? (stats.get(b.trader_id)?.avg_rating ?? 0) - (stats.get(a.trader_id)?.avg_rating ?? 0)
-        : a.amount_pence - b.amount_pence,
+      byRating ? (statsFor(d, b.trader_id).avg_rating ?? 0) - (statsFor(d, a.trader_id).avg_rating ?? 0) : a.amount_pence - b.amount_pence,
     );
     const chip = (active: boolean) =>
       `inline-flex min-h-10 items-center rounded-full px-4 text-sm font-semibold ${active ? "border-2 border-brand bg-brand-soft text-brand" : "border border-gray-300 bg-white"}`;
@@ -140,59 +151,61 @@ function CustomerView({
             {pending.length} {pending.length === 1 ? "quote" : "quotes"} received
           </h2>
           <div className="flex gap-2">
-            <Link href={`/jobs/${job.id}`} className={chip(!byRating)}>Cheapest first</Link>
-            <Link href={`/jobs/${job.id}?sort=rating`} className={chip(byRating)}>Best rated</Link>
+            <Link href={`/jobs/${job.id}`} className={chip(!byRating)} replace>Cheapest first</Link>
+            <Link href={`/jobs/${job.id}?sort=rating`} className={chip(byRating)} replace>Best rated</Link>
           </div>
         </div>
         {sorted.length === 0 && (
-          <p className="card text-sm text-muted">No quotes yet. Tradespeople in your area have been notified.</p>
+          <p className="card flex items-center gap-3 text-sm text-muted">
+            <span className="h-3 w-3 animate-pulse rounded-full bg-brand" aria-hidden="true" />
+            Waiting for quotes. Tradespeople in your area have been notified.
+          </p>
         )}
-        {sorted.map((q) => (
-          <article key={q.id} className="card flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <Avatar name={q.trader.business_name || q.trader.full_name} />
-              <div className="min-w-0 flex-1">
-                <Link href={`/profile/${q.trader_id}`} className="font-semibold hover:underline">
-                  {q.trader.business_name || q.trader.full_name}
-                </Link>
-                <div><TraderRating stats={stats.get(q.trader_id)} /></div>
+        {sorted.map((q) => {
+          const t = trader(q.trader_id);
+          return (
+            <article key={q.id} className="card flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <Avatar name={displayName(t)} />
+                <div className="min-w-0 flex-1">
+                  <Link href={`/profile/${t.id}`} className="font-semibold hover:underline">{displayName(t)}</Link>
+                  <div><TraderRating stats={statsFor(d, t.id)} /></div>
+                </div>
+                <div className="text-right">
+                  <div className="font-display text-2xl font-bold">{money(q.amount_pence)}</div>
+                  <div className="text-xs text-muted">quoted price</div>
+                </div>
               </div>
-              <div className="text-right">
-                <div className="font-display text-2xl font-bold">{money(q.amount_pence)}</div>
-                <div className="text-xs text-muted">quoted price</div>
+              {q.message && <p className="text-sm text-gray-700">“{q.message}”</p>}
+              {q.earliest_start && <p className="text-sm text-muted">Can start {date(q.earliest_start)}</p>}
+              <div className="flex gap-2">
+                <Link href={`/profile/${t.id}`} className="btn-secondary flex-1">View profile</Link>
+                <button type="button" onClick={() => demo.acceptQuote(q.id)} className="btn-primary flex-1">
+                  Accept quote
+                </button>
               </div>
-            </div>
-            {q.message && <p className="text-sm text-gray-700">“{q.message}”</p>}
-            {q.earliest_start && <p className="text-sm text-muted">Can start {date(q.earliest_start)}</p>}
-            <div className="flex gap-2">
-              <Link href={`/profile/${q.trader_id}`} className="btn-secondary flex-1">View profile</Link>
-              <form action={acceptQuote} className="flex-1">
-                <input type="hidden" name="job_id" value={job.id} />
-                <input type="hidden" name="quote_id" value={q.id} />
-                <button className="btn-primary w-full">Accept quote</button>
-              </form>
-            </div>
-          </article>
-        ))}
-        <form action={cancelJob}>
-          <input type="hidden" name="job_id" value={job.id} />
-          <button className="btn-danger">Cancel this job</button>
-        </form>
+            </article>
+          );
+        })}
+        <div>
+          <button type="button" onClick={() => demo.cancelJob(job.id)} className="btn-danger">Cancel this job</button>
+        </div>
       </section>
     );
   }
 
   if (job.status === "cancelled") return <p className="card text-sm text-muted">You cancelled this job.</p>;
 
-  const traderName = accepted ? accepted.trader.business_name || accepted.trader.full_name : "Your trader";
+  const t = accepted ? trader(accepted.trader_id) : undefined;
+  const traderName = t ? displayName(t) : "Your trader";
   return (
     <section className="flex flex-col gap-3">
-      {accepted && (
+      {accepted && t && (
         <div className="card flex items-center gap-3">
           <Avatar name={traderName} />
           <div className="flex-1">
-            <Link href={`/profile/${accepted.trader_id}`} className="font-semibold hover:underline">{traderName}</Link>
-            <div><TraderRating stats={stats.get(accepted.trader_id)} /></div>
+            <Link href={`/profile/${t.id}`} className="font-semibold hover:underline">{traderName}</Link>
+            <div><TraderRating stats={statsFor(d, t.id)} /></div>
           </div>
           <div className="text-right">
             <div className="font-display text-xl font-bold">{money(accepted.amount_pence)}</div>
@@ -201,20 +214,25 @@ function CustomerView({
         </div>
       )}
       {job.status === "assigned" && (
-        <p className="card text-sm text-muted">
-          {traderName} will do the job and send the invoice here when it&apos;s finished. You&apos;ll get an alert.
+        <p className="card flex items-center gap-3 text-sm text-muted">
+          <span className="h-3 w-3 animate-pulse rounded-full bg-amber-500" aria-hidden="true" />
+          {traderName} is on the job. The invoice will appear here when the work is finished.
         </p>
       )}
       {invoice && <InvoiceCard invoice={invoice} />}
       {invoice?.status === "unpaid" && (
-        <form action={payInvoice} className="card flex flex-col gap-3">
-          <input type="hidden" name="job_id" value={job.id} />
-          <input type="hidden" name="invoice_id" value={invoice.id} />
+        <form
+          className="card flex flex-col gap-3"
+          onSubmit={(e) => {
+            const get = fields(e);
+            demo.payInvoice(invoice.id, get("method") as PaymentMethod);
+          }}
+        >
           <fieldset className="flex flex-col gap-1">
             <legend className="mb-2 font-semibold">How would you like to pay?</legend>
             {[
-              ["card", "Debit or credit card", "Simulated in this prototype"],
-              ["bank_transfer", "Bank transfer", "Simulated in this prototype"],
+              ["card", "Debit or credit card", "Visa ending 4821 (simulated)"],
+              ["bank_transfer", "Bank transfer", "Open Banking (simulated)"],
               ["cash", "Cash", "Pay the trader in person; they confirm they received it"],
             ].map(([value, label, hint], i) => (
               <label key={value} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl px-2 hover:bg-gray-50">
@@ -231,7 +249,8 @@ function CustomerView({
         </form>
       )}
       {invoice?.status === "cash_pending" && (
-        <p className="card text-sm text-muted">
+        <p className="card flex items-center gap-3 text-sm text-muted">
+          <span className="h-3 w-3 animate-pulse rounded-full bg-amber-500" aria-hidden="true" />
           You marked this as paid in cash. Waiting for {traderName} to confirm they received it.
         </p>
       )}
@@ -242,13 +261,15 @@ function CustomerView({
 // ------------------------------------------------------------------ trader
 
 function TraderView({
+  me,
   job,
   myQuote,
   isAssigned,
   invoice,
 }: {
+  me: Profile;
   job: Job;
-  myQuote?: QuoteRow;
+  myQuote?: Quote;
   isAssigned: boolean;
   invoice: Invoice | null;
 }) {
@@ -257,31 +278,27 @@ function TraderView({
       <section className="flex flex-col gap-3">
         {myQuote?.status === "pending" && (
           <div className="card flex flex-wrap items-center justify-between gap-3">
-            <p>
-              You quoted <b>{money(myQuote.amount_pence)}</b>. The customer hasn&apos;t decided yet. You can update your quote below.
+            <p className="flex-1">
+              You quoted <b>{money(myQuote.amount_pence)}</b>. Waiting for the customer to choose. You can update your quote below.
             </p>
-            <form action={withdrawQuote}>
-              <input type="hidden" name="job_id" value={job.id} />
-              <input type="hidden" name="quote_id" value={myQuote.id} />
-              <button className="btn-danger">Withdraw</button>
-            </form>
+            <button type="button" onClick={() => demo.withdrawQuote(myQuote.id)} className="btn-danger">Withdraw</button>
           </div>
         )}
-        <form action={submitQuote} className="card flex flex-col gap-4">
+        <form
+          key={myQuote?.created_at ?? "new"}
+          className="card flex flex-col gap-4"
+          onSubmit={(e) => {
+            const get = fields(e);
+            const pence = toPence(get("amount"));
+            if (!pence) return alert("Please enter a valid price in pounds.");
+            demo.submitQuote(me.id, job.id, pence, get("message") || null, get("earliest_start") || null);
+          }}
+        >
           <h2 className="h2">{myQuote ? "Update your quote" : "Send a quote"}</h2>
-          <input type="hidden" name="job_id" value={job.id} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="amount" className="label">Total price (£)</label>
-              <input
-                id="amount"
-                name="amount"
-                required
-                inputMode="decimal"
-                defaultValue={myQuote ? (myQuote.amount_pence / 100).toFixed(2) : ""}
-                className="input"
-                placeholder="95.00"
-              />
+              <input id="amount" name="amount" required inputMode="decimal" defaultValue={myQuote ? (myQuote.amount_pence / 100).toFixed(2) : ""} className="input" placeholder="95.00" />
               <p className="mt-1 text-xs text-muted">Include VAT if you charge it.</p>
             </div>
             <div>
@@ -317,9 +334,17 @@ function TraderView({
         <p className="card text-sm">
           <b>You won this job</b> at {money(myQuote!.amount_pence)}. When the work is done, raise the invoice here.
         </p>
-        <form action={createInvoice} className="card flex flex-col gap-4">
+        <form
+          className="card flex flex-col gap-4"
+          onSubmit={(e) => {
+            const f = new FormData(e.currentTarget);
+            const get = fields(e);
+            const pence = toPence(get("net_amount"));
+            if (!pence) return alert("Please enter a valid amount in pounds.");
+            demo.createInvoice(me.id, job.id, get("description") || "Work completed", pence, f.get("add_vat") === "on", Number(get("due_days")));
+          }}
+        >
           <h2 className="h2">Job complete: raise invoice</h2>
-          <input type="hidden" name="job_id" value={job.id} />
           <div>
             <label htmlFor="description" className="label">Work done</label>
             <textarea id="description" name="description" rows={3} maxLength={2000} className="textarea" defaultValue={job.title} />
@@ -353,9 +378,8 @@ function TraderView({
     );
   }
 
-  // invoiced or paid
   if (!invoice) return null;
-  const overdue = invoice.status === "unpaid" && new Date(invoice.due_date) < new Date(new Date().toDateString());
+  const overdue = invoice.status === "unpaid" && invoice.due_date < new Date().toISOString().slice(0, 10);
   return (
     <section className="flex flex-col gap-3">
       <InvoiceCard invoice={invoice} />
@@ -366,11 +390,9 @@ function TraderView({
             Automatic reminders go out 2 days before the due date, on the day, and every 3 days after.
             {invoice.last_reminder_at && ` Last reminder: ${timeAgo(invoice.last_reminder_at)}.`}
           </p>
-          <form action={sendReminder}>
-            <input type="hidden" name="job_id" value={job.id} />
-            <input type="hidden" name="invoice_id" value={invoice.id} />
-            <button className="btn-secondary">Send a reminder now</button>
-          </form>
+          <div>
+            <button type="button" onClick={() => demo.sendReminder(invoice.id)} className="btn-secondary">Send a reminder now</button>
+          </div>
         </div>
       )}
       {invoice.status === "cash_pending" && (
@@ -379,17 +401,8 @@ function TraderView({
             The customer says they paid <b>{money(invoice.total_pence)} in cash</b>. Did you receive it?
           </p>
           <div className="flex gap-2">
-            {[
-              ["yes", "Yes, received", "btn-primary"],
-              ["no", "Not received", "btn-danger"],
-            ].map(([value, label, cls]) => (
-              <form key={value} action={confirmCash} className="flex-1">
-                <input type="hidden" name="job_id" value={job.id} />
-                <input type="hidden" name="invoice_id" value={invoice.id} />
-                <input type="hidden" name="received" value={value} />
-                <button className={`${cls} w-full`}>{label}</button>
-              </form>
-            ))}
+            <button type="button" onClick={() => demo.confirmCash(invoice.id, true)} className="btn-primary flex-1">Yes, received</button>
+            <button type="button" onClick={() => demo.confirmCash(invoice.id, false)} className="btn-danger flex-1">Not received</button>
           </div>
         </div>
       )}
@@ -430,12 +443,14 @@ function InvoiceCard({ invoice }: { invoice: Invoice }) {
 }
 
 function ReviewSection({
+  me,
   jobId,
   myReview,
   theirReview,
   otherName,
   isCustomer,
 }: {
+  me: Profile;
   jobId: string;
   myReview?: Review;
   theirReview?: Review;
@@ -451,15 +466,22 @@ function ReviewSection({
           {myReview.comment && <p className="mt-1 text-sm">{myReview.comment}</p>}
         </div>
       ) : (
-        <form action={leaveReview} className="card flex flex-col gap-4">
+        <form
+          className="card flex flex-col gap-4"
+          onSubmit={(e) => {
+            const get = fields(e);
+            const rating = Number(get("rating"));
+            if (!rating) return alert("Please choose a star rating.");
+            demo.leaveReview(me.id, jobId, rating, get("comment"));
+          }}
+        >
           <h2 className="h2">Rate {otherName}</h2>
-          <input type="hidden" name="job_id" value={jobId} />
           <fieldset>
             <legend className="label">
               {isCustomer ? "How was the work?" : "How was it working for this customer? (communication, access, payment)"}
             </legend>
-            <div className="flex flex-row-reverse justify-end gap-1">
-              {[5, 4, 3, 2, 1].map((n) => (
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((n) => (
                 <label key={n} className="cursor-pointer">
                   <input type="radio" name="rating" value={n} required className="peer sr-only" />
                   <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-gray-300 text-sm font-semibold peer-checked:border-star peer-checked:bg-amber-50 peer-checked:text-star peer-focus-visible:ring-2 peer-focus-visible:ring-brand">
@@ -470,9 +492,7 @@ function ReviewSection({
             </div>
           </fieldset>
           <div>
-            <label htmlFor="comment" className="label">
-              {isCustomer ? "Your review" : "Comment for other tradespeople"}
-            </label>
+            <label htmlFor="comment" className="label">{isCustomer ? "Your review" : "Comment for other tradespeople"}</label>
             <textarea id="comment" name="comment" rows={3} maxLength={2000} className="textarea" />
             <p className="mt-1 text-xs text-muted">Shown on their public profile. Keep it factual.</p>
           </div>

@@ -13,15 +13,30 @@ A UK marketplace for handyman and trades jobs where **trust works both ways**:
 
 The app name is set in one place, `src/lib/config.ts`, so it can be renamed later.
 
+## Demo mode (this branch)
+
+This version is a **sales demo with no database**. Everything is stored in the visitor's browser (`localStorage`), pre-filled with sample customers, tradespeople, jobs and reviews (`src/lib/demo/seed.ts`). Sample accounts reply automatically, so one person can walk through the whole flow:
+
+- as a customer: post a job → quotes arrive within seconds → accept one → the trader "finishes" and invoices → pay → leave a review (and receive one back);
+- as a tradesperson: quote on a sample customer's job → it's accepted → raise the invoice → it's paid → rate the customer.
+
+The dark **Demo** bar at the top switches between accounts and resets the sample data.
+
+The full database version (Supabase, with the same flow enforced by Postgres functions and row-level security) is on the **`supabase-version`** branch, and its schema is in `supabase/migrations/`.
+
 ## Tech
 
-- Next.js 16 (App Router, Server Actions), Tailwind CSS 4
+- Next.js 16 (App Router), Tailwind CSS 4
 - Supabase: Postgres, Auth, Row Level Security, `pg_cron` for reminders
 - Deploys to Vercel
 
 All writes go through Postgres functions (`supabase/migrations/…_init.sql`) that check who is calling, so users can't, for example, accept a quote on someone else's job or mark their own invoice as paid by editing the table directly.
 
-## Set up
+## Run the demo
+
+`npm install && npm run dev`, then open http://localhost:3000. No environment variables are needed.
+
+## Set up the database version (`supabase-version` branch)
 
 1. Create a Supabase project (region: London, `eu-west-2`).
 2. Run `supabase/migrations/20261115000000_init.sql` in the SQL editor (or `supabase db push`).
